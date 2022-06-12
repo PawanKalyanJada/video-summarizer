@@ -69,7 +69,6 @@ if selection == 'Try on few sample videos':
     state.text('\n Completed!')
 
 if selection == 'Enter your own video link':
-  st.write('Note: Please enter the videos in which the language spoken is English')
   form = st.form(key="form")
   youtube_video = form.text_input("Enter the youtube link")
   predict_button = form.form_submit_button(label='Get Video Summary')
