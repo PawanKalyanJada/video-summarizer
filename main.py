@@ -69,14 +69,18 @@ if selection == 'Try on few sample videos':
     state.text('\n Completed!')
 
 if selection == 'Enter your own video link':
+  st.write('Note: Please enter the videos in which the language spoken is English')
   form = st.form(key="form")
   youtube_video = form.text_input("Enter the youtube link")
   predict_button = form.form_submit_button(label='Get Video Summary')
   #youtube_video = st.text_input('Enter the youtube link')
 
   if predict_button:
-    if('youtube.com/watch' in youtube_video):
-      video_id = youtube_video.split("=")[1]
+    if('youtube.com/watch' in youtube_video) or ('youtu.be' in youtube_video):
+      if ('youtube.com/watch' in youtube_video):
+        video_id = youtube_video.split("=")[1]
+      else:
+        video_id = youtube_video.split("/")[-1]
       state = st.text('\n Processing video, Please wait.....')
       progress_bar = st.progress(30)
       try:
