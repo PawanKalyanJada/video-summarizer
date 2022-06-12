@@ -1,3 +1,4 @@
 transformers
 youtube_transcript_api
 streamlit-player
+pytorch
