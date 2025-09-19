@@ -1,155 +1,130 @@
-from transformers import AutoTokenizer, pipeline
-from youtube_transcript_api import YouTubeTranscriptApi
 import streamlit as st
+from transformers import pipeline
+from youtube_transcript_api import YouTubeTranscriptApi
 from streamlit_player import st_player
 
-@st.cache(allow_output_mutation = True)
-def get_models():
-  tokenizer = AutoTokenizer.from_pretrained("sshleifer/distilbart-cnn-12-6")
 
-  summarizer = pipeline('summarization')
-  return tokenizer, summarizer
+# Cache the model once (efficient loading)
+@st.cache_resource
+def load_summarizer():
+    return pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
 
-tokenizer, summarizer = get_models()
-def get_result(i):
-  text_ids=ids[i:i+batch]
-  text=tokenizer.decode(text_ids,temperature=1.5)
-  if(len(text_ids)<142):
-    max_length=50
-    min_length=25
-  else:
-    min_length=60
-    max_length=142
-  res=summarizer(text,max_length=max_length,min_length=min_length)[0]
-  return res['summary_text']
 
-st.title("Youtube Video Summarization")
-st.write('This is a web app where you can enter a youtube video link and get a summary of the video.')
-selection = st.selectbox('You can enter your own youtube link or try on few samples : ',('Choose an option','Try on few sample videos','Enter your own video link'))
+summarizer = load_summarizer()
 
-if selection == 'Try on few sample videos':
-  youtube_video = st.selectbox('Few Examples:',('Choose an option','https://www.youtube.com/watch?v=Cu3R5it4cQs','https://www.youtube.com/watch?v=PZEQnCaGxgw','https://www.youtube.com/watch?v=TKXldNsmRaw'))
-  if youtube_video == 'Choose an option':
-    pass
-  else:
-    video_id = youtube_video.split("=")[1]
-    state = st.text('\n Processing video, Please wait.....')
-    progress_bar = st.progress(30)
-    transcript = YouTubeTranscriptApi.get_transcript(video_id)
-    result = ""
-    for i in transcript:
-        result += ' ' + i['text']
 
-    result=result.strip()
-    progress_bar.progress(50)
-    ids=tokenizer(result)['input_ids']
-    ids=ids[1:-1]
+def summarize_text(text, chunk_size=1000):
+    """Split text into chunks and summarize each part with a progress bar."""
+    words = text.split()
+    chunks = [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
 
-    if(len(ids)>2000):
-      batch=1000
-    elif(len(ids)>1000):
-      batch=500
-    else:
-      batch=250
+    summaries = []
+    progress = st.progress(0)
+    status = st.empty()
 
-    progress_bar.progress(70)
-    summarized_text=[get_result(i) for i in range(0,len(ids),batch)]
+    for idx, chunk in enumerate(chunks, 1):
+        status.text(f"Summarizing chunk {idx}/{len(chunks)} ...")
+        summary = summarizer(
+            chunk,
+            max_length=150,
+            min_length=40,
+            do_sample=False
+        )[0]["summary_text"]
+        summaries.append(summary.strip())
+        progress.progress(int((idx / len(chunks)) * 100))
 
-    summarized_text=[i.strip() for i in summarized_text]
+    progress.empty()
+    status.text("✅ Summarization completed!")
+    return " ".join(summaries)
 
-    summarized_result='. '.join(summarized_text)
-    summarized_result = summarized_result.replace('..', '.')
-    progress_bar.progress(90)
-    st.subheader('Submitted Youtube Video:')
-    st_player(youtube_video)
-    progress_bar.progress(100)
-    st.subheader('Summarized Result:')
-    st.write(summarized_result)
-    progress_bar.empty()
-    state.text('\n Completed!')
 
-if selection == 'Enter your own video link':
-  form = st.form(key="form")
-  youtube_video = form.text_input("Enter the youtube link")
-  predict_button = form.form_submit_button(label='Get Video Summary')
-  #youtube_video = st.text_input('Enter the youtube link')
-
-  if predict_button:
-    if('youtube.com/watch' in youtube_video) or ('youtu.be' in youtube_video):
-      if ('youtube.com/watch' in youtube_video):
-        video_id = youtube_video.split("=")[1]
-      else:
-        video_id = youtube_video.split("/")[-1]
-      state = st.text('\n Processing video, Please wait.....')
-      progress_bar = st.progress(30)
-      try:
+def get_transcript(video_id):
+    """Fetch transcript text from YouTube video."""
+    try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        result = ""
-        for i in transcript:
-            result += ' ' + i['text']
+        return " ".join([i["text"] for i in transcript]).strip()
+    except Exception:
+        return None
 
-        result=result.strip()
-        progress_bar.progress(50)
-        ids=tokenizer(result)['input_ids']
-        ids=ids[1:-1]
 
-        if(len(ids)>2000):
-          batch=1000
-        elif(len(ids)>1000):
-          batch=500
+# Streamlit UI
+st.set_page_config(page_title="YouTube Summarizer", layout="centered")
+st.title("📺 YouTube Video Summarization")
+st.write("Enter a YouTube video link and get an AI-generated summary of the video.")
+
+selection = st.selectbox(
+    "Choose an option:",
+    ("-- Select --", "Try sample videos", "Enter your own link")
+)
+
+if selection == "Try sample videos":
+    youtube_video = st.selectbox(
+        "Examples:",
+        (
+            "-- Select --",
+            "https://www.youtube.com/watch?v=Cu3R5it4cQs",
+            "https://www.youtube.com/watch?v=PZEQnCaGxgw",
+            "https://www.youtube.com/watch?v=TKXldNsmRaw"
+        )
+    )
+
+    if youtube_video != "-- Select --":
+        video_id = youtube_video.split("v=")[-1]
+        state = st.empty()
+        state.text("⏳ Fetching transcript...")
+        text = get_transcript(video_id)
+
+        if not text:
+            state.text("❌ Transcript not available for this video.")
         else:
-          batch=250
+            state.text("⏳ Starting summarization...")
+            summary = summarize_text(text)
 
-        progress_bar.progress(70)
-        summarized_text=[get_result(i) for i in range(0,len(ids),batch)]
+            st.subheader("▶️ Submitted Video")
+            st_player(youtube_video)
 
-        summarized_text=[i.strip() for i in summarized_text]
-
-        summarized_result='. '.join(summarized_text)
-        summarized_result = summarized_result.replace('..', '.')
-        progress_bar.progress(90)
-        st.subheader('Submitted Youtube Video:')
-        st_player(youtube_video)
-        progress_bar.progress(100)
-        st.subheader('Summarized Result:')
-        st.write(summarized_result)
-        progress_bar.empty()
-        state.text('\n Completed!')
-    
-      except:
-        progress_bar.progress(100)
-        progress_bar.empty()
-        state.text('\n Completed!')
-        st.write("The closed captions for this video are disabled! Please try with a video where the closed captions aren't disabled")
-
-    else:
-      st.text("Please enter a valid youtube link")
+            st.subheader("📝 Summary")
+            st.write(summary)
 
 
-footer="""<style>
-a:link , a:visited{
-color: blue;
-background-color: transparent;
-text-decoration: underline;
-}
-a:hover,  a:active {
-color: red;
-background-color: transparent;
-text-decoration: underline;
-}
-.footer {
-position: fixed;
-left: 0;
-bottom: 0;
-width: 100%;
-background-color: white;
-color: black;
-text-align: center;
-}
-</style>
-<div class="footer">
-<p>Developed by <a style='display: block; text-align: center;' href="https://www.linkedin.com/in/pawan-kalyan-9704991aa/" target="_blank">Pawan Kalyan Jada</a></p>
-<p>Email ID : <a style='display: block; text-align: center;' target="_blank">pawankalyanjada@gmail.com</a></p>
-</div>
-"""
-st.markdown(footer,unsafe_allow_html=True)
+elif selection == "Enter your own link":
+    youtube_video = st.text_input("Enter the YouTube link:")
+
+    if youtube_video:
+        if "youtube.com/watch" in youtube_video:
+            video_id = youtube_video.split("v=")[-1].split("&")[0]
+        elif "youtu.be" in youtube_video:
+            video_id = youtube_video.split("/")[-1]
+        else:
+            video_id = None
+
+        if video_id:
+            state = st.empty()
+            state.text("⏳ Fetching transcript...")
+            text = get_transcript(video_id)
+
+            if not text:
+                state.text("❌ Transcript not available for this video.")
+            else:
+                state.text("⏳ Starting summarization...")
+                summary = summarize_text(text)
+
+                st.subheader("▶️ Submitted Video")
+                st_player(youtube_video)
+
+                st.subheader("📝 Summary")
+                st.write(summary)
+        else:
+            st.warning("⚠️ Please enter a valid YouTube link!")
+
+
+# Footer
+st.markdown(
+    """
+    <div style="text-align:center; margin-top:40px; font-size:14px; color:gray;">
+        Developed by <a href="https://www.linkedin.com/in/pawan-kalyan-9704991aa/" target="_blank">Pawan Kalyan Jada</a><br>
+        📧 pawankalyanjada@gmail.com
+    </div>
+    """,
+    unsafe_allow_html=True
+)
